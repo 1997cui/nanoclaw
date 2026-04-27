@@ -261,6 +261,14 @@ function buildMounts(
   // skill symlinks)
   mounts.push({ hostPath: claudeDir, containerPath: '/home/node/.claude', readonly: false });
 
+  // Per-group persistent home directory for skills that store auth/state
+  // under the user's HOME (e.g. pine-voice writes ~/.pine-voice/credentials.json).
+  // Without this mount, every container --rm wipes the credentials and the skill
+  // re-prompts for verification codes on each invocation.
+  const pineVoiceDir = path.join(DATA_DIR, 'v2-sessions', agentGroup.id, '.pine-voice');
+  fs.mkdirSync(pineVoiceDir, { recursive: true });
+  mounts.push({ hostPath: pineVoiceDir, containerPath: '/home/node/.pine-voice', readonly: false });
+
   // Shared agent-runner source — read-only, same code for all groups.
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
   mounts.push({ hostPath: agentRunnerSrc, containerPath: '/app/src', readonly: true });
