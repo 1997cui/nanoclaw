@@ -23,6 +23,7 @@ ARG CLAUDE_CODE_VERSION=2.1.116
 ARG AGENT_BROWSER_VERSION=latest
 ARG VERCEL_VERSION=latest
 ARG BUN_VERSION=1.3.12
+ARG PINEAI_CLI_VERSION=0.4.0
 
 # ---- System dependencies -----------------------------------------------------
 # tini: correct PID 1 / signal forwarding so outbound.db writes finalize on
@@ -51,6 +52,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         git \
         tini \
         unzip \
+        python3 \
+        python3-pip \
     && if [ "$INSTALL_CJK_FONTS" = "true" ]; then \
         apt-get install -y --no-install-recommends fonts-noto-cjk; \
        fi \
@@ -103,6 +106,13 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
 
 RUN --mount=type=cache,target=/root/.cache/pnpm \
     pnpm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+# ---- pip global packages (Pine AI CLI for the pine-assistant skill) ----------
+# Debian 12 enforces PEP 668; --break-system-packages is the documented escape
+# hatch for system-wide installs in containers (we own the whole image, no
+# distro packages to clobber). Pin so rebuilds are reproducible.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --break-system-packages "pineai-cli==${PINEAI_CLI_VERSION}"
 
 # ---- Entrypoint --------------------------------------------------------------
 COPY entrypoint.sh /app/entrypoint.sh

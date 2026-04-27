@@ -269,6 +269,12 @@ function buildMounts(
   fs.mkdirSync(pineVoiceDir, { recursive: true });
   mounts.push({ hostPath: pineVoiceDir, containerPath: '/home/node/.pine-voice', readonly: false });
 
+  // Same idea for the `pine` CLI (pine-assistant skill), which writes
+  // `~/.pine/config.json` after `pine auth verify`.
+  const pineDir = path.join(DATA_DIR, 'v2-sessions', agentGroup.id, '.pine');
+  fs.mkdirSync(pineDir, { recursive: true });
+  mounts.push({ hostPath: pineDir, containerPath: '/home/node/.pine', readonly: false });
+
   // Shared agent-runner source — read-only, same code for all groups.
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
   mounts.push({ hostPath: agentRunnerSrc, containerPath: '/app/src', readonly: true });
