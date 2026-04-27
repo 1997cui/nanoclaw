@@ -164,6 +164,23 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Per-group persistent home directories for skills that store auth/state
+  // under the user's HOME (e.g. pine-voice writes ~/.pine-voice/credentials.json).
+  // Without this mount, every container --rm wipes the credentials and the skill
+  // re-prompts for verification codes on each invocation.
+  const pineVoiceDir = path.join(
+    DATA_DIR,
+    'sessions',
+    group.folder,
+    '.pine-voice',
+  );
+  fs.mkdirSync(pineVoiceDir, { recursive: true });
+  mounts.push({
+    hostPath: pineVoiceDir,
+    containerPath: '/home/node/.pine-voice',
+    readonly: false,
+  });
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);

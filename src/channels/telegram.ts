@@ -1,8 +1,11 @@
+import fs from 'fs';
 import https from 'https';
+import path from 'path';
 import { Api, Bot } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
+import { resolveGroupFolderPath } from '../group-folder.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
@@ -39,6 +42,36 @@ async function sendTelegramMessage(
     logger.debug({ err }, 'Markdown send failed, falling back to plain text');
     await api.sendMessage(chatId, text, options);
   }
+}
+
+/**
+ * Download a file from a URL into a local path.
+ * Returns true on success, false on failure.
+ */
+function downloadFile(url: string, destPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const file = fs.createWriteStream(destPath);
+    https
+      .get(url, (res) => {
+        if (res.statusCode !== 200) {
+          file.close();
+          fs.unlink(destPath, () => {});
+          resolve(false);
+          return;
+        }
+        res.pipe(file);
+        file.on('finish', () => {
+          file.close();
+          resolve(true);
+        });
+      })
+      .on('error', (err) => {
+        file.close();
+        fs.unlink(destPath, () => {});
+        logger.error({ err }, 'Failed to download Telegram file');
+        resolve(false);
+      });
+  });
 }
 
 export class TelegramChannel implements Channel {
@@ -199,13 +232,96 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:photo', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      let placeholder = '[Photo]';
+      try {
+        const photos = ctx.message.photo;
+        if (photos && photos.length > 0) {
+          const file = await ctx.getFile();
+          if (file.file_path) {
+            const downloadUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+            const groupDir = resolveGroupFolderPath(group.folder);
+            const attachDir = path.join(groupDir, 'attachments');
+            fs.mkdirSync(attachDir, { recursive: true });
+
+            const ext = path.extname(file.file_path) || '.jpg';
+            const destName = `${Date.now()}_photo${ext}`;
+            const destPath = path.join(attachDir, destName);
+
+            const ok = await downloadFile(downloadUrl, destPath);
+            if (ok) {
+              const containerPath = `/workspace/group/attachments/${destName}`;
+              placeholder = `[Photo — saved to ${containerPath}. Use the Read tool on this path to view the image.]`;
+              logger.info({ chatJid, destPath }, 'Downloaded Telegram photo');
+            } else {
+              logger.warn({ chatJid }, 'Failed to download Telegram photo');
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn({ chatJid, err }, 'Error downloading Telegram photo');
+      }
+
+      storeNonText(ctx, placeholder);
+    });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
-    this.bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`);
+    this.bot.on('message:document', async (ctx) => {
+      const doc = ctx.message.document;
+      if (!doc) return;
+      const fileName = doc.file_name || 'file';
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      // Try to download the document to the group workspace
+      let placeholder = `[Document: ${fileName}]`;
+      try {
+        const file = await ctx.getFile();
+        if (file.file_path) {
+          const downloadUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+          const groupDir = resolveGroupFolderPath(group.folder);
+          const attachDir = path.join(groupDir, 'attachments');
+          fs.mkdirSync(attachDir, { recursive: true });
+
+          // Prefix with timestamp to avoid collisions
+          const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const destName = `${Date.now()}_${safeFileName}`;
+          const destPath = path.join(attachDir, destName);
+
+          const ok = await downloadFile(downloadUrl, destPath);
+          if (ok) {
+            const containerPath = `/workspace/group/attachments/${destName}`;
+            const isPdf =
+              doc.mime_type === 'application/pdf' ||
+              fileName.toLowerCase().endsWith('.pdf');
+            placeholder = isPdf
+              ? `[PDF attachment: ${fileName} — saved to ${containerPath}]\nUse \`pdf-reader read ${containerPath}\` to extract the text.`
+              : `[Document: ${fileName} — saved to ${containerPath}]`;
+            logger.info(
+              { chatJid, fileName, destPath },
+              'Downloaded Telegram document',
+            );
+          } else {
+            logger.warn(
+              { chatJid, fileName },
+              'Failed to download Telegram document',
+            );
+          }
+        }
+      } catch (err) {
+        logger.warn(
+          { chatJid, fileName, err },
+          'Error downloading Telegram document',
+        );
+      }
+
+      storeNonText(ctx, placeholder);
     });
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
