@@ -27,6 +27,7 @@ import {
   type ProviderContainerContribution,
   type VolumeMount,
 } from './providers/provider-container-registry.js';
+import { toOneCliIdentifier } from './onecli-identifier.js';
 import { markContainerRunning, markContainerStopped, sessionDir, writeSessionRouting } from './session-manager.js';
 import type { AgentGroup, Session } from './types.js';
 
@@ -109,7 +110,9 @@ async function spawnContainer(session: Session): Promise<void> {
   const containerName = `nanoclaw-v2-${agentGroup.folder}-${Date.now()}`;
   // OneCLI agent identifier is always the agent group id — stable across
   // sessions and reversible via getAgentGroup() for approval routing.
-  const agentIdentifier = agentGroup.id;
+  // OneCLI rejects underscores in identifiers (must match `[a-z0-9-]+`),
+  // so we map `_` → `-` at the boundary; reverse with fromOneCliIdentifier.
+  const agentIdentifier = toOneCliIdentifier(agentGroup.id);
   const args = await buildContainerArgs(
     mounts,
     containerName,
